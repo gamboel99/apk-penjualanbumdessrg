@@ -1,0 +1,13 @@
+LANGKAH CEPAT
+1. Ekstrak ZIP.
+2. Buat repository baru di GitHub, misalnya: sumber-rejeki-gampeng.
+3. Upload semua isi folder project ke repository.
+4. Buka Vercel -> Add New Project -> Import repository GitHub.
+5. Klik Deploy. Tidak perlu Environment Variable untuk versi ini.
+6. Setelah jadi, buka URL Vercel dari HP/laptop.
+
+CATATAN:
+- Nomor dokumen otomatis tersimpan pada browser/perangkat yang dipakai.
+- Jika browser dihapus datanya, sequence lokal dapat kembali.
+- Untuk banyak admin/perangkat dengan satu nomor urut bersama, perlu database terpusat.
+- Tombol WhatsApp mencoba mengirim PDF melalui fitur Share perangkat. Jika browser tidak mendukung lampiran file, WhatsApp dibuka dengan pesan dan PDF perlu dilampirkan manual.
