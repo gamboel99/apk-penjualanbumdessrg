@@ -1,13 +1,8 @@
-LANGKAH CEPAT
-1. Ekstrak ZIP.
-2. Buat repository baru di GitHub, misalnya: sumber-rejeki-gampeng.
-3. Upload semua isi folder project ke repository.
-4. Buka Vercel -> Add New Project -> Import repository GitHub.
-5. Klik Deploy. Tidak perlu Environment Variable untuk versi ini.
-6. Setelah jadi, buka URL Vercel dari HP/laptop.
+DEPLOY SINGKAT
 
-CATATAN:
-- Nomor dokumen otomatis tersimpan pada browser/perangkat yang dipakai.
-- Jika browser dihapus datanya, sequence lokal dapat kembali.
-- Untuk banyak admin/perangkat dengan satu nomor urut bersama, perlu database terpusat.
-- Tombol WhatsApp mencoba mengirim PDF melalui fitur Share perangkat. Jika browser tidak mendukung lampiran file, WhatsApp dibuka dengan pesan dan PDF perlu dilampirkan manual.
+1. Upload seluruh isi folder ini ke repository GitHub.
+2. Di Vercel pilih Import Project dari repository tersebut.
+3. Framework: Next.js. Build command: npm run build.
+4. Deploy.
+
+PENTING: v2.0 memakai IndexedDB lokal sebagai penyimpanan default. Artinya data tidak otomatis tersinkron antar perangkat. Untuk operasi multi-user/multi-device, hubungkan adapter database cloud pada backend sebelum produksi.

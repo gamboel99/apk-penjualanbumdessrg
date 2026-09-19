@@ -1,43 +1,26 @@
-# Sumber Rejeki Gampeng — PO, Penawaran, Invoice & Nota
+# Sumber Rejeki Gampeng — Administrasi Penjualan & Persediaan v2.0
 
-Aplikasi web sederhana untuk membuat:
-- Purchase Order (PO)
-- Surat Penawaran
-- Invoice
-- Nota
+Aplikasi Next.js untuk administrasi penjualan, pembelian, pembayaran bertahap, dokumen PO/Penawaran/Invoice/Nota, stok, stock opname, dan laporan.
 
-Fitur:
-- Nomor dokumen otomatis dan berurutan.
-- Data usaha sudah terisi sesuai identitas Sumber Rejeki Gampeng.
-- Tampilan dokumen bergaya dot-matrix/struk.
-- PDF dibuat langsung di browser dengan jsPDF.
-- Tombol Cetak, Download PDF, dan Kirim via WhatsApp.
-- Data nomor terakhir tersimpan di browser (`localStorage`).
-- Tidak membutuhkan database untuk versi satu komputer/browser.
+## Logika transaksi utama
+- PO/Penawaran tidak mengubah stok.
+- Pembelian/Barang Masuk menambah stok.
+- Penjualan/barang keluar mengurangi stok satu kali.
+- Pembayaran DP tidak mengurangi stok.
+- Setiap pembayaran menghasilkan Nota Pembayaran.
+- Invoice transaksi menunjukkan sisa tagihan; pada penjualan baru invoice otomatis dibuat sebagai pasangan transaksi.
+- Contoh Rp11.750.000 dibayar DP Rp8.000.000 → Nota DP Rp8.000.000 dan sisa Invoice Rp3.750.000. Pembayaran berikutnya menurunkan sisa sampai Rp0/LUNAS.
+- Stock Opname membuat transaksi penyesuaian yang tetap tercatat pada kartu stok.
 
-## Jalankan lokal
+## Penyimpanan
+Versi ini memakai IndexedDB sebagai database browser, bukan localStorage. Ini membuat data lebih terstruktur dan tidak bergantung pada ukuran localStorage. Untuk penggunaan multi-perangkat/terpusat, adapter cloud perlu dipasang ke backend/database (misalnya Supabase/Postgres) sebelum aplikasi digunakan sebagai sistem online bersama.
 
+## Menjalankan
 ```bash
 npm install
-npm run dev
+npm run build
+npm start
 ```
 
-Buka `http://localhost:3000`.
-
-## Deploy ke Vercel
-
-1. Upload folder ini ke GitHub.
-2. Di Vercel pilih **Add New → Project**.
-3. Import repository GitHub tersebut.
-4. Framework akan terdeteksi sebagai Next.js.
-5. Klik Deploy.
-
-## Catatan nomor otomatis
-
-Versi ini menyimpan nomor terakhir di browser yang digunakan. Jadi cocok untuk satu komputer/admin.
-
-Jika nantinya beberapa petugas harus memakai nomor yang sama secara terpusat, tambahkan database (misalnya Supabase/PostgreSQL) untuk sequence nomor dokumen.
-
-## WhatsApp
-
-Browser modern dapat membuka WhatsApp dengan pesan yang sudah disiapkan. Pada perangkat yang mendukung Web Share API, aplikasi juga mencoba membagikan file PDF sebagai lampiran. Untuk pengiriman PDF otomatis tanpa interaksi pengguna ke nomor WhatsApp tertentu, diperlukan WhatsApp Business Cloud API/backend.
+## Catatan penting
+Build sudah diuji dengan `npm run build` pada lingkungan pengembangan. Karena database browser bersifat lokal, jangan menganggap data pada komputer A otomatis muncul pada komputer/HP B tanpa konfigurasi database cloud.

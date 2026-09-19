@@ -4,379 +4,124 @@ import { useEffect, useMemo, useState } from "react";
 import jsPDF from "jspdf";
 import autoTable from "jspdf-autotable";
 
-const BUSINESS = {
-  name: "SUMBER REJEKI GAMPENG",
-  owner: "Bibi Ainia Merazunnisyah",
-  address: "Jln Raya Kediri Kertosono KM. 4, Kecamatan Gampeng, Kabupaten Kediri",
-  phone: "085708830108",
-  email: "Bumdesrejekigampeng@gmail.com",
-};
+const BUSINESS = { name:"SUMBER REJEKI GAMPENG", owner:"Bibi Ainia Merazunnisyah", address:"Jln Raya Kediri Kertosono KM. 4, Kecamatan Gampeng, Kabupaten Kediri", phone:"085708830108", email:"Bumdesrejekigampeng@gmail.com" };
+const TYPES = { PO:{label:"Purchase Order",prefix:"PO"}, PENAWARAN:{label:"Surat Penawaran",prefix:"PNW"}, INVOICE:{label:"Invoice",prefix:"INV"}, NOTA:{label:"Nota Pembayaran",prefix:"NOTA"} };
+const today = () => new Date().toISOString().slice(0,10);
+const rupiah = n => new Intl.NumberFormat("id-ID",{style:"currency",currency:"IDR",maximumFractionDigits:0}).format(Number(n||0));
+const num = v => Number(v||0);
+const uid = p => `${p}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+const emptyItem = () => ({productId:"",name:"",qty:1,unit:"pcs",price:0});
+const initialDB = { products:[], purchases:[], sales:[], payments:[], documents:[], stockMoves:[], opname:[], sequences:{PO:0,PNW:0,INV:0,NOTA:0} };
 
-const TYPES = {
-  PO: { label: "Purchase Order", prefix: "PO" },
-  PENAWARAN: { label: "Surat Penawaran", prefix: "PNW" },
-  INVOICE: { label: "Invoice", prefix: "INV" },
-  NOTA: { label: "Nota", prefix: "NOTA" },
-};
+function nextNumber(sequences,prefix,date=today()) { const year = new Date(date).getFullYear(); const n=(sequences[prefix]||0)+1; return `${prefix}/${String(n).padStart(4,"0")}/SRG/${year}`; }
+function clone(x){return JSON.parse(JSON.stringify(x));}
+function money(n){return Math.round(num(n));}
 
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const rupiah = (n) =>
-  new Intl.NumberFormat("id-ID", {
-    style: "currency",
-    currency: "IDR",
-    maximumFractionDigits: 0,
-  }).format(Number(n || 0));
+export default function Home(){
+  const [db,setDb] = useState(initialDB);
+  const [ready,setReady] = useState(false);
+  const [tab,setTab] = useState("dashboard");
+  const [notice,setNotice] = useState("");
+  const [docType,setDocType] = useState("NOTA");
+  const [docDate,setDocDate] = useState(today());
+  const [customer,setCustomer] = useState({name:"",address:"",phone:"",email:""});
+  const [items,setItems] = useState([emptyItem()]);
+  const [discount,setDiscount] = useState(0);
+  const [tax,setTax] = useState(0);
+  const [notes,setNotes] = useState("");
+  const [paymentFor,setPaymentFor] = useState("");
+  const [paymentAmount,setPaymentAmount] = useState(0);
+  const [paymentDate,setPaymentDate] = useState(today());
+  const [paymentMethod,setPaymentMethod] = useState("Transfer");
+  const [supplier,setSupplier] = useState("");
+  const [purchaseDate,setPurchaseDate] = useState(today());
+  const [opnameDate,setOpnameDate] = useState(today());
+  const [search,setSearch] = useState("");
 
-function makeItem() {
-  return { name: "", qty: 1, unit: "pcs", price: 0 };
+  useEffect(()=>{ let dead=false; (async()=>{ try{ const r=await indexedDBOpen(); const data=await idbGet(r,"db"); if(!dead&&data) setDb({...initialDB,...data}); }catch(e){ console.error(e); } finally{if(!dead)setReady(true);} })(); return()=>{dead=true}; },[]);
+  useEffect(()=>{ if(ready) idbPut(db); },[db,ready]);
+  useEffect(()=>{ if(notice){const t=setTimeout(()=>setNotice(""),3000);return()=>clearTimeout(t)} },[notice]);
+
+  const products = db.products;
+  const sales = db.sales;
+  const purchases = db.purchases;
+  const balances = useMemo(()=>{const m={}; sales.forEach(s=>m[s.id]=money(s.total-s.paid)); return m},[sales]);
+  const currentStock = useMemo(()=>{const m={}; products.forEach(p=>m[p.id]=num(p.openingStock)); db.stockMoves.forEach(x=>{m[x.productId]=(m[x.productId]||0)+num(x.qty);}); return m},[products,db.stockMoves]);
+  const totalSales = sales.reduce((a,x)=>a+num(x.total),0);
+  const totalPurchases = purchases.reduce((a,x)=>a+num(x.total),0);
+  const receivable = sales.reduce((a,x)=>a+Math.max(0,num(x.total)-num(x.paid)),0);
+  const lowStock = products.filter(p=>num(currentStock[p.id])<=num(p.minStock)).length;
+  const selectedSale = sales.find(s=>s.id===paymentFor);
+  const total = useMemo(()=>{const sub=items.reduce((a,i)=>a+num(i.qty)*num(i.price),0);const d=Math.min(Math.max(0,num(discount)),sub);const base=sub-d;const t=base*(num(tax)/100);return {sub,d,base,t,total:base+t}},[items,discount,tax]);
+
+  function setP(i,key,val){setItems(old=>old.map((x,j)=>j===i?{...x,[key]:val}:x));}
+  function selectProduct(i,id){const p=products.find(x=>x.id===id); if(!p)return; setP(i,"productId",id);setP(i,"name",p.name);setP(i,"unit",p.unit);setP(i,"price",p.sellPrice);}
+  function addItem(){setItems(x=>[...x,emptyItem()]);}
+  function removeItem(i){setItems(x=>x.length===1?x:x.filter((_,j)=>j!==i));}
+  function resetDoc(){setCustomer({name:"",address:"",phone:"",email:""});setItems([emptyItem()]);setDiscount(0);setTax(0);setNotes("");setPaymentFor("");setPaymentAmount(0);}
+  function sequenceCommit(prefix,date){const n=(db.sequences[prefix]||0)+1;setDb(d=>({...d,sequences:{...d.sequences,[prefix]:n}}));return `${prefix}/${String(n).padStart(4,"0")}/SRG/${new Date(date).getFullYear()}`;}
+  function ensureValid(){if(!items.some(i=>i.name&&num(i.qty)>0)) {setNotice("Tambahkan minimal satu barang/jasa.");return false} return true;}
+
+  function saveDocument(type=docType){ if(!ensureValid())return null; const prefix=TYPES[type].prefix; const number=sequenceCommit(prefix,docDate); const d={id:uid("doc"),number,type,date:docDate,customer:clone(customer),items:clone(items),subtotal:total.sub,discount:total.d,tax:total.t,total:total.total,notes}; setDb(x=>({...x,documents:[d,...x.documents]})); setNotice(`${TYPES[type].label} ${number} tersimpan.`); return d; }
+
+  function saveSale(){
+    if(!ensureValid())return;
+    const productLines=items.filter(i=>i.productId);
+    for(const i of productLines){const stock=num(currentStock[i.productId]); if(num(i.qty)>stock){setNotice(`Stok ${i.name} tidak cukup. Tersedia ${stock}.`);return;}}
+    const saleNumber=sequenceCommit("NOTA",docDate); const invNumber=sequenceCommit("INV",docDate);
+    const s={id:uid("sale"),number:saleNumber,invoiceNumber:invNumber,date:docDate,customer:clone(customer),items:clone(items),subtotal:total.sub,discount:total.d,tax:total.t,total:total.total,paid:0,status:"BELUM LUNAS",notes};
+    setDb(x=>({...x,sales:[s,...x.sales],documents:[{...s,id:uid("doc"),number:saleNumber,type:"NOTA"},{...s,id:uid("doc"),number:invNumber,type:"INVOICE"},...x.documents],stockMoves:[...productLines.map(i=>({id:uid("move"),date:docDate,productId:i.productId,qty:-num(i.qty),ref:saleNumber,kind:"PENJUALAN"})),...x.stockMoves]}));
+    setNotice(`Penjualan ${saleNumber} tersimpan. Invoice sisa otomatis ${invNumber}.`); resetDoc();
+  }
+  function recordPayment(){
+    if(!selectedSale||num(paymentAmount)<=0){setNotice("Pilih transaksi dan masukkan jumlah pembayaran.");return;}
+    const remaining=Math.max(0,num(selectedSale.total)-num(selectedSale.paid)); const amount=Math.min(num(paymentAmount),remaining); if(amount<=0){setNotice("Transaksi sudah lunas.");return;}
+    const number=sequenceCommit("NOTA",paymentDate); const payment={id:uid("pay"),saleId:selectedSale.id,number,date:paymentDate,amount,method:paymentMethod};
+    const newPaid=money(selectedSale.paid+amount); const status=newPaid>=money(selectedSale.total)?"LUNAS":"SEBAGIAN / DP";
+    setDb(x=>({...x,payments:[payment,...x.payments],sales:x.sales.map(s=>s.id===selectedSale.id?{...s,paid:newPaid,status}:s),documents:[{id:uid("doc"),number,type:"NOTA",date:paymentDate,customer:selectedSale.customer,items:selectedSale.items,subtotal:selectedSale.subtotal,discount:selectedSale.discount,tax:selectedSale.tax,total:amount,notes:`Pembayaran ${paymentMethod}. Untuk transaksi ${selectedSale.number}. Sisa tagihan setelah pembayaran: ${rupiah(selectedSale.total-newPaid)}.`,paymentAmount:amount,relatedSaleId:selectedSale.id,...payment},...x.documents]}));
+    setNotice(`Nota pembayaran ${number}: ${rupiah(amount)}. Sisa ${rupiah(selectedSale.total-newPaid)}.`);setPaymentAmount(0);
+  }
+  function savePurchase(){
+    if(!supplier||!items.some(i=>i.name&&num(i.qty)>0)){setNotice("Supplier dan barang wajib diisi.");return;}
+    const number=sequenceCommit("PO",purchaseDate); const p={id:uid("pur"),number,date:purchaseDate,supplier,items:clone(items),total:items.reduce((a,i)=>a+num(i.qty)*num(i.price),0),notes};
+    const moves=items.filter(i=>i.productId).map(i=>({id:uid("move"),date:purchaseDate,productId:i.productId,qty:num(i.qty),ref:number,kind:"PEMBELIAN"}));
+    setDb(x=>({...x,purchases:[p,...x.purchases],documents:[{...p,id:uid("doc"),type:"PO"},...x.documents],stockMoves:[...moves,...x.stockMoves]}));setNotice(`Pembelian ${number} tersimpan dan stok bertambah.`);setSupplier("");resetDoc();
+  }
+  function saveProduct(e){e.preventDefault();const f=new FormData(e.currentTarget);const name=f.get("name").trim();if(!name){return} const p={id:uid("prd"),code:f.get("code")||`BRG${String(products.length+1).padStart(3,"0")}`,name,unit:f.get("unit")||"pcs",buyPrice:num(f.get("buyPrice")),sellPrice:num(f.get("sellPrice")),openingStock:num(f.get("openingStock")),minStock:num(f.get("minStock"))};setDb(x=>({...x,products:[...x.products,p]}));e.currentTarget.reset();setNotice(`Barang ${name} ditambahkan.`);}
+  function saveOpname(e){e.preventDefault();const f=new FormData(e.currentTarget);const pid=f.get("productId"),physical=num(f.get("physical"));const system=num(currentStock[pid]);if(!pid){return}const diff=physical-system;const move={id:uid("move"),date:opnameDate,productId:pid,qty:diff,ref:`OPNAME/${opnameDate}`,kind:"STOCK OPNAME",note:`Stok sistem ${system}; fisik ${physical}; selisih ${diff}`};setDb(x=>({...x,stockMoves:[move,...x.stockMoves],opname:[{id:uid("op"),...move,systemStock:system,physicalStock:physical,difference:diff},...x.opname]}));e.currentTarget.reset();setNotice(`Stock opname tersimpan. Penyesuaian ${diff>=0?"+":""}${diff}.`);}
+
+  function pdfFromRecord(r,typeOverride){const type=typeOverride||r.type||"NOTA";const doc=new jsPDF({unit:"mm",format:"a4"});const W=doc.internal.pageSize.getWidth(),m=14;doc.setFont("courier","bold");doc.setFontSize(17);doc.text(BUSINESS.name,m,17);doc.setFont("courier","normal");doc.setFontSize(9);doc.text(BUSINESS.owner,m,23);doc.text(BUSINESS.address,m,28);doc.text(`Telp. ${BUSINESS.phone} | ${BUSINESS.email}`,m,33);try{doc.addImage("/logo-srg.jpeg","JPEG",W-43,10,28,28)}catch{}doc.setLineDashPattern([1,1],0);doc.line(m,38,W-m,38);doc.setLineDashPattern([],0);doc.setFont("courier","bold");doc.setFontSize(14);doc.text((TYPES[type]?.label||type).toUpperCase(),m,47);doc.setFont("courier","normal");doc.setFontSize(9);doc.text(`No. ${r.number}`,m,53);doc.text(`Tanggal: ${new Date(r.date).toLocaleDateString("id-ID")}`,m,58);doc.setFont("courier","bold");doc.text(type==="PO"?"KEPADA / SUPPLIER:":"KEPADA:",m,68);doc.setFont("courier","normal");doc.text(r.customer?.name||r.supplier||"-",m,73);doc.text(r.customer?.address||"-",m,78);doc.text(r.customer?.phone?`Telp. ${r.customer.phone}`:"",m,83);
+    autoTable(doc,{startY:90,margin:{left:m,right:m},theme:"plain",head:[["NO","URAIAN","QTY","SAT","HARGA","JUMLAH"]],body:(r.items||[]).map((i,j)=>[j+1,i.name||"-",num(i.qty),i.unit||"-",rupiah(i.price),rupiah(num(i.qty)*num(i.price))]),styles:{font:"courier",fontSize:8.5,cellPadding:2,lineColor:[0,0,0],lineWidth:.2},headStyles:{font:"courier",fontStyle:"bold",fillColor:[245,245,245],textColor:[0,0,0]}});let y=doc.lastAutoTable.finalY+7;doc.text(`Subtotal       : ${rupiah(r.subtotal||0)}`,W-82,y);y+=5;doc.text(`Potongan       : ${rupiah(r.discount||0)}`,W-82,y);y+=5;doc.text(`Pajak          : ${rupiah(r.tax||0)}`,W-82,y);y+=6;doc.setFont("courier","bold");doc.text(`TOTAL          : ${rupiah(r.total||0)}`,W-82,y);if(type==="INVOICE"&&r.relatedSaleId){const s=sales.find(x=>x.id===r.relatedSaleId);if(s){y+=6;doc.text(`SUDAH DIBAYAR  : ${rupiah(s.paid)}`,W-82,y);y+=5;doc.text(`SISA TAGIHAN   : ${rupiah(Math.max(0,s.total-s.paid))}`,W-82,y);}} y+=10;doc.setFont("courier","normal");doc.text("Catatan:",m,y);y+=5;doc.text(doc.splitTextToSize(r.notes||"-",W-2*m),m,y);y+=15;doc.text("Hormat kami,",W-58,y);y+=18;doc.setFont("courier","bold");doc.text(BUSINESS.owner,W-72,y);doc.setFont("courier","normal");doc.setFontSize(7);doc.text("Dokumen dibuat secara elektronik oleh Sistem Sumber Rejeki Gampeng.",m,286);const filename=`${type}-${String(r.number).replaceAll("/","-")}.pdf`;doc.save(filename);}
+
+  const menu=[ ["dashboard","🏠 Dashboard"],["products","📦 Master Barang"],["purchase","🛒 Pembelian"],["sales","🧾 Penjualan & Pembayaran"],["documents","📄 Dokumen"],["stock","📊 Persediaan"],["reports","📈 Laporan"] ];
+  if(!ready)return <div className="loading">Memuat database aplikasi…</div>;
+  return <main className="page">
+    <header className="topbar"><div className="brand"><img src="/logo-srg.jpeg"/><div><div className="brand-title">SUMBER REJEKI GAMPENG</div><div className="brand-sub">Administrasi Penjualan • Pembelian • Pembayaran • Persediaan</div></div></div><div className="db-status">● DATABASE BROWSER AKTIF</div></header>
+    <div className="shell"><aside className="sidebar">{menu.map(([k,l])=><button key={k} className={tab===k?"active":""} onClick={()=>setTab(k)}>{l}</button>)}<div className="side-note">Data tersimpan di IndexedDB perangkat ini. Struktur siap dihubungkan ke database cloud melalui adapter server.</div></aside>
+      <section className="content">{notice&&<div className="notice">✓ {notice}</div>}
+      {tab==="dashboard"&&<Dashboard totalSales={totalSales} totalPurchases={totalPurchases} receivable={receivable} lowStock={lowStock} sales={sales} products={products} stock={currentStock} setTab={setTab}/>} 
+      {tab==="products"&&<Products products={products} stock={currentStock} saveProduct={saveProduct} search={search} setSearch={setSearch}/>} 
+      {tab==="purchase"&&<Purchase supplier={supplier} setSupplier={setSupplier} date={purchaseDate} setDate={setPurchaseDate} items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem} total={items.reduce((a,i)=>a+num(i.qty)*num(i.price),0)} notes={notes} setNotes={setNotes} savePurchase={savePurchase}/>} 
+      {tab==="sales"&&<Sales sales={sales} balances={balances} onPayment={recordPayment} saveSale={saveSale} customer={customer} setCustomer={setCustomer} items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem} total={total} discount={discount} setDiscount={setDiscount} tax={tax} setTax={setTax} notes={notes} setNotes={setNotes} paymentFor={paymentFor} setPaymentFor={setPaymentFor} amount={paymentAmount} setAmount={setPaymentAmount} date={paymentDate} setDate={setPaymentDate} method={paymentMethod} setMethod={setPaymentMethod} selected={selectedSale} pdf={pdfFromRecord} setTab={setTab}/>} 
+      {tab==="documents"&&<Documents docs={db.documents} pdf={pdfFromRecord} setTab={setTab} docType={docType} setDocType={setDocType} date={docDate} setDate={setDocDate} customer={customer} setCustomer={setCustomer} items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem} discount={discount} setDiscount={setDiscount} tax={tax} setTax={setTax} total={total} notes={notes} setNotes={setNotes} saveDocument={saveDocument}/>} 
+      {tab==="stock"&&<Stock products={products} stock={currentStock} moves={db.stockMoves} opname={db.opname} saveOpname={saveOpname} date={opnameDate} setDate={setOpnameDate}/>} 
+      {tab==="reports"&&<Reports sales={sales} purchases={purchases} stock={currentStock} products={products} moves={db.stockMoves}/>} 
+      </section></div><footer>{BUSINESS.name} • {BUSINESS.address} • {BUSINESS.phone}</footer>
+  </main>
 }
 
-export default function Home() {
-  const [type, setType] = useState("PO");
-  const [date, setDate] = useState(todayISO());
-  const [customer, setCustomer] = useState({
-    name: "",
-    address: "",
-    phone: "",
-    email: "",
-  });
-  const [notes, setNotes] = useState("");
-  const [discount, setDiscount] = useState(0);
-  const [tax, setTax] = useState(0);
-  const [items, setItems] = useState([makeItem()]);
-  const [sequences, setSequences] = useState({ PO: 0, PNW: 0, INV: 0, NOTA: 0 });
-  const [saved, setSaved] = useState(false);
-
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("srg_sequences");
-      if (raw) setSequences(JSON.parse(raw));
-    } catch {}
-  }, []);
-
-  const sequence = sequences[TYPES[type].prefix] || 0;
-  const previewNumber = `${TYPES[type].prefix}/${String(sequence + 1).padStart(4, "0")}/SRG/${new Date(date).getFullYear()}`;
-
-  const subtotal = useMemo(
-    () => items.reduce((sum, i) => sum + Number(i.qty || 0) * Number(i.price || 0), 0),
-    [items]
-  );
-  const discountValue = Math.max(0, Number(discount || 0));
-  const afterDiscount = Math.max(0, subtotal - discountValue);
-  const taxValue = afterDiscount * (Number(tax || 0) / 100);
-  const grandTotal = afterDiscount + taxValue;
-
-  function updateItem(index, key, value) {
-    setItems((old) => old.map((it, i) => (i === index ? { ...it, [key]: value } : it)));
-  }
-
-  function addItem() {
-    setItems((old) => [...old, makeItem()]);
-  }
-
-  function removeItem(index) {
-    setItems((old) => (old.length === 1 ? old : old.filter((_, i) => i !== index)));
-  }
-
-  function commitNumber() {
-    const prefix = TYPES[type].prefix;
-    const next = { ...sequences, [prefix]: (sequences[prefix] || 0) + 1 };
-    setSequences(next);
-    localStorage.setItem("srg_sequences", JSON.stringify(next));
-    setSaved(true);
-    return `${prefix}/${String(next[prefix]).padStart(4, "0")}/SRG/${new Date(date).getFullYear()}`;
-  }
-
-  function buildPDF(number, action = "save") {
-    const doc = new jsPDF({ unit: "mm", format: "a4" });
-    const W = doc.internal.pageSize.getWidth();
-    const margin = 14;
-
-    // Dot-matrix style: monospace font + dotted separators.
-    doc.setFont("courier", "bold");
-    doc.setFontSize(17);
-    doc.text(BUSINESS.name, margin, 17);
-    doc.setFont("courier", "normal");
-    doc.setFontSize(9);
-    doc.text(BUSINESS.owner, margin, 23);
-    doc.text(BUSINESS.address, margin, 28);
-    doc.text(`Telp. ${BUSINESS.phone} | ${BUSINESS.email}`, margin, 33);
-
-    try {
-      doc.addImage("/logo-srg.jpeg", "JPEG", W - 43, 10, 28, 28);
-    } catch {}
-
-    doc.setLineDashPattern([1, 1], 0);
-    doc.line(margin, 38, W - margin, 38);
-    doc.setLineDashPattern([], 0);
-
-    doc.setFont("courier", "bold");
-    doc.setFontSize(14);
-    doc.text(TYPES[type].label.toUpperCase(), margin, 47);
-    doc.setFont("courier", "normal");
-    doc.setFontSize(9);
-    doc.text(`No. ${number}`, margin, 53);
-    doc.text(`Tanggal: ${new Date(date).toLocaleDateString("id-ID")}`, margin, 58);
-
-    doc.setFont("courier", "bold");
-    doc.text("KEPADA:", margin, 68);
-    doc.setFont("courier", "normal");
-    doc.text(customer.name || "-", margin, 73);
-    doc.text(customer.address || "-", margin, 78);
-    doc.text(customer.phone ? `Telp. ${customer.phone}` : "", margin, 83);
-
-    autoTable(doc, {
-      startY: 90,
-      margin: { left: margin, right: margin },
-      theme: "plain",
-      head: [["NO", "URAIAN", "QTY", "SAT", "HARGA", "JUMLAH"]],
-      body: items.map((it, i) => [
-        i + 1,
-        it.name || "-",
-        Number(it.qty || 0),
-        it.unit || "-",
-        rupiah(it.price),
-        rupiah(Number(it.qty || 0) * Number(it.price || 0)),
-      ]),
-      styles: {
-        font: "courier",
-        fontSize: 8.5,
-        cellPadding: 2,
-        lineColor: [0, 0, 0],
-        lineWidth: 0.2,
-      },
-      headStyles: {
-        font: "courier",
-        fontStyle: "bold",
-        fillColor: [245, 245, 245],
-        textColor: [0, 0, 0],
-      },
-      columnStyles: {
-        0: { cellWidth: 10, halign: "center" },
-        1: { cellWidth: 65 },
-        2: { cellWidth: 15, halign: "right" },
-        3: { cellWidth: 18 },
-        4: { cellWidth: 32, halign: "right" },
-        5: { cellWidth: 36, halign: "right" },
-      },
-    });
-
-    let y = doc.lastAutoTable.finalY + 7;
-    doc.setFont("courier", "normal");
-    doc.text(`Subtotal       : ${rupiah(subtotal)}`, W - 82, y);
-    y += 5;
-    doc.text(`Potongan       : ${rupiah(discountValue)}`, W - 82, y);
-    y += 5;
-    doc.text(`Pajak ${Number(tax || 0)}%       : ${rupiah(taxValue)}`, W - 82, y);
-    y += 6;
-    doc.setFont("courier", "bold");
-    doc.text(`TOTAL          : ${rupiah(grandTotal)}`, W - 82, y);
-
-    y += 10;
-    doc.setFont("courier", "normal");
-    doc.text("Catatan:", margin, y);
-    y += 5;
-    const noteLines = doc.splitTextToSize(notes || "-", W - 2 * margin);
-    doc.text(noteLines, margin, y);
-    y += noteLines.length * 5 + 10;
-
-    doc.text("Hormat kami,", W - 58, y);
-    y += 18;
-    doc.setFont("courier", "bold");
-    doc.text(BUSINESS.owner, W - 72, y);
-
-    doc.setFont("courier", "normal");
-    doc.setFontSize(7);
-    doc.text("Dokumen dibuat secara elektronik oleh Sistem Sumber Rejeki Gampeng.", margin, 286);
-
-    const filename = `${TYPES[type].prefix}-${number.replaceAll("/", "-")}.pdf`;
-    if (action === "blob") return { blob: doc.output("blob"), filename };
-    doc.save(filename);
-    return { blob: doc.output("blob"), filename };
-  }
-
-  async function generateAndSave() {
-    const number = commitNumber();
-    buildPDF(number, "save");
-  }
-
-  async function sendWhatsApp() {
-    const number = commitNumber();
-    const { blob, filename } = buildPDF(number, "blob");
-    const message = `Dokumen ${TYPES[type].label} ${number} dari ${BUSINESS.name}. Total ${rupiah(grandTotal)}.`;
-    let shared = false;
-
-    try {
-      const file = new File([blob], filename, { type: "application/pdf" });
-      if (navigator.share && navigator.canShare && navigator.canShare({ files: [file] })) {
-        await navigator.share({ title: TYPES[type].label, text: message, files: [file] });
-        shared = true;
-      }
-    } catch {}
-
-    if (!shared) {
-      const url = `https://wa.me/?text=${encodeURIComponent(message)}`;
-      window.open(url, "_blank", "noopener,noreferrer");
-      alert("WhatsApp dibuka. Jika PDF belum ikut terlampir, gunakan tombol Download PDF lalu lampirkan file tersebut di WhatsApp.");
-    }
-  }
-
-  function printDocument() {
-    const number = commitNumber();
-    const { blob } = buildPDF(number, "blob");
-    const url = URL.createObjectURL(blob);
-    const w = window.open(url, "_blank");
-    if (w) setTimeout(() => w.print(), 1200);
-  }
-
-  function resetForm() {
-    setCustomer({ name: "", address: "", phone: "", email: "" });
-    setNotes("");
-    setDiscount(0);
-    setTax(0);
-    setItems([makeItem()]);
-    setSaved(false);
-  }
-
-  return (
-    <main className="page">
-      <header className="topbar">
-        <div className="brand">
-          <img src="/logo-srg.jpeg" alt="Logo Sumber Rejeki Gampeng" />
-          <div>
-            <div className="brand-title">SUMBER REJEKI GAMPENG</div>
-            <div className="brand-sub">Sistem Dokumen Penjualan • PO • Penawaran • Invoice • Nota</div>
-          </div>
-        </div>
-        <div className="status">{saved ? "✓ NOMOR TERSIMPAN" : "SIAP DIGUNAKAN"}</div>
-      </header>
-
-      <section className="layout">
-        <div className="panel form-panel">
-          <div className="panel-head">
-            <div>
-              <h1>Buat Dokumen</h1>
-              <p>Isi data transaksi, lalu cetak atau buat PDF.</p>
-            </div>
-          </div>
-
-          <div className="grid2">
-            <label>Jenis Dokumen
-              <select value={type} onChange={(e) => setType(e.target.value)}>
-                {Object.entries(TYPES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-              </select>
-            </label>
-            <label>Tanggal
-              <input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-            </label>
-          </div>
-
-          <div className="number-box">
-            <span>NOMOR BERIKUTNYA</span>
-            <strong>{previewNumber}</strong>
-          </div>
-
-          <h2>Data Pelanggan</h2>
-          <div className="grid2">
-            <label>Nama / Instansi
-              <input value={customer.name} onChange={(e) => setCustomer({...customer, name: e.target.value})} placeholder="Nama pelanggan / instansi" />
-            </label>
-            <label>No. WhatsApp
-              <input value={customer.phone} onChange={(e) => setCustomer({...customer, phone: e.target.value})} placeholder="08xxxxxxxxxx" />
-            </label>
-          </div>
-          <label>Alamat
-            <textarea rows="2" value={customer.address} onChange={(e) => setCustomer({...customer, address: e.target.value})} placeholder="Alamat pelanggan" />
-          </label>
-
-          <h2>Rincian Barang / Jasa</h2>
-          <div className="items">
-            {items.map((it, i) => (
-              <div className="item-row" key={i}>
-                <input className="item-name" value={it.name} onChange={(e) => updateItem(i, "name", e.target.value)} placeholder="Nama barang / jasa" />
-                <input className="qty" type="number" min="0" value={it.qty} onChange={(e) => updateItem(i, "qty", e.target.value)} />
-                <input className="unit" value={it.unit} onChange={(e) => updateItem(i, "unit", e.target.value)} placeholder="sat" />
-                <input className="price" type="number" min="0" value={it.price} onChange={(e) => updateItem(i, "price", e.target.value)} placeholder="Harga" />
-                <button className="remove" onClick={() => removeItem(i)} title="Hapus">×</button>
-              </div>
-            ))}
-          </div>
-          <button className="secondary" onClick={addItem}>＋ Tambah Barang</button>
-
-          <div className="grid3 totals-input">
-            <label>Potongan (Rp)
-              <input type="number" min="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
-            </label>
-            <label>Pajak (%)
-              <input type="number" min="0" step="0.01" value={tax} onChange={(e) => setTax(e.target.value)} />
-            </label>
-            <div className="grand"><span>TOTAL</span><strong>{rupiah(grandTotal)}</strong></div>
-          </div>
-
-          <label>Catatan
-            <textarea rows="3" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Syarat pembayaran, rekening, ucapan, dll." />
-          </label>
-
-          <div className="actions">
-            <button className="primary" onClick={generateAndSave}>⬇ Download PDF</button>
-            <button className="wa" onClick={sendWhatsApp}>☏ Kirim via WhatsApp</button>
-            <button className="print" onClick={printDocument}>⎙ Cetak</button>
-            <button className="secondary" onClick={resetForm}>Reset</button>
-          </div>
-          <div className="hint">
-            Nomor otomatis tersimpan di browser ini. Setiap kali tombol PDF/WhatsApp/Cetak digunakan, nomor berikutnya akan naik satu.
-          </div>
-        </div>
-
-        <div className="panel preview-panel">
-          <div className="preview-title">PREVIEW • DOT MATRIX</div>
-          <div className="paper">
-            <div className="paper-head">
-              <img src="/logo-srg.jpeg" alt="" />
-              <div>
-                <div className="paper-business">{BUSINESS.name}</div>
-                <div>{BUSINESS.owner}</div>
-                <div>{BUSINESS.address}</div>
-                <div>{BUSINESS.phone} • {BUSINESS.email}</div>
-              </div>
-            </div>
-            <div className="dots"></div>
-            <div className="doc-title">{TYPES[type].label.toUpperCase()}</div>
-            <div>No. {previewNumber}</div>
-            <div>Tanggal: {new Date(date).toLocaleDateString("id-ID")}</div>
-            <br />
-            <div><b>KEPADA:</b> {customer.name || "........................................"}</div>
-            <div>{customer.address || "........................................"}</div>
-            <div className="dots"></div>
-            <table>
-              <thead><tr><th>NO</th><th>URAIAN</th><th>QTY</th><th>HARGA</th><th>JUMLAH</th></tr></thead>
-              <tbody>
-                {items.map((it, i) => (
-                  <tr key={i}>
-                    <td>{i + 1}</td><td>{it.name || "-"}</td><td>{it.qty} {it.unit}</td>
-                    <td className="right">{rupiah(it.price)}</td>
-                    <td className="right">{rupiah(Number(it.qty || 0) * Number(it.price || 0))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="dots"></div>
-            <div className="summary">
-              <div>Subtotal <span>{rupiah(subtotal)}</span></div>
-              <div>Potongan <span>{rupiah(discountValue)}</span></div>
-              <div>Pajak {tax}% <span>{rupiah(taxValue)}</span></div>
-              <div className="total-line">TOTAL <span>{rupiah(grandTotal)}</span></div>
-            </div>
-            <div className="dots"></div>
-            <div>Catatan: {notes || "-"}</div>
-            <div className="sign">Hormat kami,<br /><br /><b>{BUSINESS.owner}</b></div>
-          </div>
-        </div>
-      </section>
-
-      <footer>
-        Sumber Rejeki Gampeng • Jln Raya Kediri Kertosono KM. 4, Kecamatan Gampeng, Kabupaten Kediri • {BUSINESS.phone}
-      </footer>
-    </main>
-  );
-}
+function Dashboard({totalSales,totalPurchases,receivable,lowStock,sales,products,stock,setTab}){return <><div className="page-title"><div><h1>Dashboard</h1><p>Ringkasan transaksi dan persediaan terkini.</p></div></div><div className="cards"><Card title="Penjualan" value={rupiah(totalSales)}/><Card title="Pembelian" value={rupiah(totalPurchases)}/><Card title="Piutang / Sisa" value={rupiah(receivable)}/><Card title="Stok Menipis" value={`${lowStock} item`}/></div><div className="two"><section className="panel"><h2>Transaksi Penjualan Terbaru</h2>{sales.length?<Table headers={["Tanggal","Nota","Pelanggan","Total","Status"]} rows={sales.slice(0,8).map(s=>[s.date,s.number,s.customer?.name||"-",rupiah(s.total),s.status])}/>:<Empty text="Belum ada penjualan."/>}</section><section className="panel"><h2>Stok Menipis</h2>{products.filter(p=>num(stock[p.id])<=num(p.minStock)).slice(0,8).map(p=><div className="stock-line" key={p.id}><span>{p.name}<small>{p.code}</small></span><b>{stock[p.id]||0} {p.unit}</b></div>)}{!lowStock&&<Empty text="Tidak ada stok menipis."/>}</section></div><div className="quick"><button onClick={()=>setTab("products")}>＋ Tambah Barang</button><button onClick={()=>setTab("purchase")}>＋ Barang Masuk</button><button onClick={()=>setTab("sales")}>💳 Catat Pembayaran</button><button onClick={()=>setTab("documents")}>📄 Buat Dokumen</button></div></>}
+function Card({title,value}){return <div className="card"><span>{title}</span><strong>{value}</strong></div>}
+function Products({products,stock,saveProduct,search,setSearch}){const list=products.filter(p=>`${p.code} ${p.name}`.toLowerCase().includes(search.toLowerCase()));return <><PageTitle title="Master Barang" sub="Kode, harga, satuan, stok awal dan batas stok minimum."/><div className="two"><section className="panel"><h2>Tambah Barang</h2><form onSubmit={saveProduct} className="formgrid"><input name="code" placeholder="Kode barang (opsional)"/><input name="name" placeholder="Nama barang *" required/><input name="unit" placeholder="Satuan" defaultValue="pcs"/><input name="buyPrice" type="number" placeholder="Harga beli"/><input name="sellPrice" type="number" placeholder="Harga jual"/><input name="openingStock" type="number" placeholder="Stok awal"/><input name="minStock" type="number" placeholder="Stok minimum"/><button className="primary" type="submit">Simpan Barang</button></form></section><section className="panel"><h2>Daftar Barang</h2><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Cari kode / nama barang"/><Table headers={["Kode","Barang","Satuan","Harga Jual","Stok","Min."]} rows={list.map(p=>[p.code,p.name,p.unit,rupiah(p.sellPrice),stock[p.id]||0,p.minStock])}/></section></div></>}
+function Purchase({supplier,setSupplier,date,setDate,items,setP,selectProduct,products,addItem,removeItem,total,notes,setNotes,savePurchase}){return <><PageTitle title="Barang Masuk / Pembelian" sub="Pembelian langsung menambah stok. Gunakan barang dari Master Barang agar kartu stok otomatis."/><section className="panel"><div className="formgrid"><input value={supplier} onChange={e=>setSupplier(e.target.value)} placeholder="Supplier *"/><input type="date" value={date} onChange={e=>setDate(e.target.value)}/></div><LineItems items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem}/><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Catatan pembelian"/><div className="bottom"><b>Total Pembelian: {rupiah(total)}</b><button className="primary" onClick={savePurchase}>Simpan Pembelian & Tambah Stok</button></div></section></>}
+function LineItems({items,setP,selectProduct,products,addItem,removeItem}){return <div className="line-items"><div className="line-head"><span>Barang</span><span>Qty</span><span>Satuan</span><span>Harga</span><span></span></div>{items.map((it,i)=><div className="line" key={i}><select value={it.productId} onChange={e=>selectProduct(i,e.target.value)}><option value="">Pilih barang</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select><input type="number" min="0" value={it.qty} onChange={e=>setP(i,"qty",e.target.value)}/><input value={it.unit} onChange={e=>setP(i,"unit",e.target.value)}/><input type="number" min="0" value={it.price} onChange={e=>setP(i,"price",e.target.value)}/><button className="danger" onClick={()=>removeItem(i)}>×</button></div>)}<button className="secondary" onClick={addItem}>＋ Tambah Baris</button></div>}
+function Sales({sales,balances,onPayment,saveSale,customer,setCustomer,items,setP,selectProduct,products,addItem,removeItem,total,discount,setDiscount,tax,setTax,notes,setNotes,paymentFor,setPaymentFor,amount,setAmount,date,setDate,method,setMethod,selected,pdf,setTab}){return <><PageTitle title="Penjualan & Pembayaran" sub="Satu transaksi penjualan memiliki total, pembayaran bertahap, Nota pembayaran, dan sisa Invoice."/><section className="panel"><h2>Buat Transaksi Penjualan</h2><div className="formgrid"><input value={customer.name} onChange={e=>setCustomer({...customer,name:e.target.value})} placeholder="Nama pelanggan / instansi"/><input value={customer.phone} onChange={e=>setCustomer({...customer,phone:e.target.value})} placeholder="No. WhatsApp"/><input className="wide" value={customer.address} onChange={e=>setCustomer({...customer,address:e.target.value})} placeholder="Alamat pelanggan"/></div><LineItems items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem}/><div className="formgrid"><input type="number" min="0" value={discount} onChange={e=>setDiscount(e.target.value)} placeholder="Potongan"/><input type="number" min="0" value={tax} onChange={e=>setTax(e.target.value)} placeholder="Pajak %"/></div><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Catatan transaksi"/><div className="bottom"><b>Total Penjualan: {rupiah(total.total)}</b><button className="primary" onClick={saveSale}>Simpan Penjualan & Kurangi Stok</button></div><div className="rule">Setelah disimpan, transaksi memiliki satu induk penjualan. Pembayaran pertama/DP menghasilkan Nota pembayaran, sedangkan Invoice menunjukkan sisa tagihan.</div></section><div className="panel payment-box"><div className="payment-summary"><div><span>Transaksi dipilih</span><select value={paymentFor} onChange={e=>setPaymentFor(e.target.value)}><option value="">Pilih transaksi belum lunas</option>{sales.filter(s=>balances[s.id]>0).map(s=><option key={s.id} value={s.id}>{s.number} — {s.customer?.name||"-"} — sisa {rupiah(balances[s.id])}</option>)}</select></div><div className="balance"><span>Sisa Tagihan</span><strong>{rupiah(selected?balances[selected.id]:0)}</strong></div></div><div className="formgrid"><input type="date" value={date} onChange={e=>setDate(e.target.value)}/><select value={method} onChange={e=>setMethod(e.target.value)}><option>Transfer</option><option>Tunai</option><option>QRIS</option><option>Giro</option></select><input type="number" min="0" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="Jumlah pembayaran"/><button className="primary" onClick={onPayment}>Simpan Pembayaran & Buat Nota</button></div><div className="rule">Catatan: pembayaran tidak mengurangi stok. Stok berkurang saat transaksi penjualan/barang keluar disimpan.</div></div><section className="panel"><h2>Riwayat Penjualan</h2><Table headers={["Tanggal","Nota","Invoice","Pelanggan","Total","Dibayar","Sisa","Status","Aksi"]} rows={sales.map(s=>[s.date,s.number,s.invoiceNumber,s.customer?.name||"-",rupiah(s.total),rupiah(s.paid),rupiah(balances[s.id]),s.status,<span className="actions"><button className="mini" onClick={()=>pdf(s,"NOTA")}>Nota</button><button className="mini" onClick={()=>pdf({...s,number:s.invoiceNumber,type:"INVOICE",relatedSaleId:s.id,total:Math.max(0,s.total-s.paid),notes:`Sisa pembayaran dari transaksi ${s.number}.`},"INVOICE")}>Invoice Sisa</button></span>])}/></section></>}
+function Documents({docs,pdf,setTab,docType,setDocType,date,setDate,customer,setCustomer,items,setP,selectProduct,products,addItem,removeItem,discount,setDiscount,tax,setTax,total,notes,setNotes,saveDocument}){return <><PageTitle title="Dokumen" sub="PO dan Penawaran tidak mengubah stok. Invoice pembayaran mengikuti transaksi penjualan."/><section className="panel"><div className="formgrid"><select value={docType} onChange={e=>setDocType(e.target.value)}>{Object.entries(TYPES).filter(([k])=>k!=="NOTA").map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select><input type="date" value={date} onChange={e=>setDate(e.target.value)}/><input value={customer.name} onChange={e=>setCustomer({...customer,name:e.target.value})} placeholder="Nama pelanggan / instansi"/><input value={customer.phone} onChange={e=>setCustomer({...customer,phone:e.target.value})} placeholder="No. WhatsApp"/><input className="wide" value={customer.address} onChange={e=>setCustomer({...customer,address:e.target.value})} placeholder="Alamat"/></div><LineItems items={items} setP={setP} selectProduct={selectProduct} products={products} addItem={addItem} removeItem={removeItem}/><div className="formgrid"><input type="number" min="0" value={discount} onChange={e=>setDiscount(e.target.value)} placeholder="Potongan"/><input type="number" min="0" value={tax} onChange={e=>setTax(e.target.value)} placeholder="Pajak %"/></div><textarea value={notes} onChange={e=>setNotes(e.target.value)} placeholder="Catatan / syarat pembayaran"/><div className="bottom"><b>Total: {rupiah(total.total)}</b><button className="primary" onClick={()=>saveDocument(docType)}>Simpan & Download Dokumen</button></div></section><section className="panel"><h2>Riwayat Dokumen</h2><Table headers={["Tanggal","Nomor","Jenis","Pihak","Total","Aksi"]} rows={docs.map(d=>[d.date,d.number,TYPES[d.type]?.label||d.type,d.customer?.name||d.supplier||"-",rupiah(d.total),<button className="mini" onClick={()=>pdf(d,d.type)}>PDF</button>])}/></section></>}
+function Stock({products,stock,moves,opname,saveOpname,date,setDate}){const [selected,setSelected]=useState("");return <><PageTitle title="Persediaan" sub="Stok saat ini, kartu pergerakan dan stock opname."/><div className="two"><section className="panel"><h2>Stock Opname</h2><form onSubmit={saveOpname} className="formgrid"><input type="date" value={date} onChange={e=>setDate(e.target.value)}/><select name="productId" value={selected} onChange={e=>setSelected(e.target.value)} required><option value="">Pilih barang</option>{products.map(p=><option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}</select><input name="physical" type="number" min="0" placeholder="Stok fisik" required/><button className="primary">Simpan Penyesuaian</button></form></section><section className="panel"><h2>Stok Saat Ini</h2><Table headers={["Kode","Barang","Stok","Minimum","Status"]} rows={products.map(p=>[p.code,p.name,`${stock[p.id]||0} ${p.unit}`,p.minStock,(num(stock[p.id])<=num(p.minStock)?"⚠ Menipis":"Aman")])}/></section></div><section className="panel"><h2>Kartu Pergerakan Stok</h2><Table headers={["Tanggal","Referensi","Jenis","Barang","Perubahan","Catatan"]} rows={moves.map(m=>[m.date,m.ref,m.kind,products.find(p=>p.id===m.productId)?.name||"-",`${num(m.qty)>0?"+":""}${m.qty}`,m.note||""])}/></section><section className="panel"><h2>Riwayat Stock Opname</h2><Table headers={["Tanggal","Barang","Sistem","Fisik","Selisih"]} rows={opname.map(o=>[o.date,products.find(p=>p.id===o.productId)?.name||"-",o.systemStock,o.physicalStock,`${o.difference>0?"+":""}${o.difference}`])}/></section></>}
+function Reports({sales,purchases,stock,products,moves}){return <><PageTitle title="Laporan" sub="Ringkasan berdasarkan data transaksi aplikasi."/><div className="cards"><Card title="Total Penjualan" value={rupiah(sales.reduce((a,x)=>a+x.total,0))}/><Card title="Total Pembelian" value={rupiah(purchases.reduce((a,x)=>a+x.total,0))}/><Card title="Transaksi Penjualan" value={sales.length}/><Card title="Jenis Barang" value={products.length}/></div><div className="two"><section className="panel"><h2>Rekap Penjualan</h2><Table headers={["Tanggal","Nota","Pelanggan","Total","Dibayar","Sisa"]} rows={sales.map(s=>[s.date,s.number,s.customer?.name||"-",rupiah(s.total),rupiah(s.paid),rupiah(s.total-s.paid)])}/></section><section className="panel"><h2>Rekap Pembelian</h2><Table headers={["Tanggal","Nomor","Supplier","Total"]} rows={purchases.map(p=>[p.date,p.number,p.supplier,rupiah(p.total)])}/></section></div></>}
+function PageTitle({title,sub}){return <div className="page-title"><div><h1>{title}</h1><p>{sub}</p></div></div>}
+function Empty({text}){return <div className="empty">{text}</div>}
+function Table({headers,rows}){return <div className="table-wrap"><table className="data"><thead><tr>{headers.map((h,i)=><th key={i}>{h}</th>)}</tr></thead><tbody>{rows.length?rows.map((r,i)=><tr key={i}>{r.map((c,j)=><td key={j}>{c}</td>)}</tr>):<tr><td colSpan={headers.length}><Empty text="Belum ada data."/></td></tr>}</tbody></table></div>}
+function indexedDBOpen(){return new Promise((resolve,reject)=>{const req=indexedDB.open("srg-admin-db",1);req.onupgradeneeded=()=>{if(!req.result.objectStoreNames.contains("kv"))req.result.createObjectStore("kv");};req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);});}
+async function idbGet(db,key){return new Promise((resolve,reject)=>{const r=db.transaction("kv","readonly").objectStore("kv").get(key);r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
+async function idbPut(data){try{const db=await indexedDBOpen();const tx=db.transaction("kv","readwrite");tx.objectStore("kv").put(data,"db");}catch(e){console.error(e)}}
